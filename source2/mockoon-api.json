@@ -1,0 +1,201 @@
+{
+  "uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "lastMigration": 33,
+  "name": "Transaction Pipeline Mock",
+  "endpointPrefix": "api",
+  "latency": 0,
+  "port": 3000,
+  "hostname": "",
+  "folders": [],
+  "routes": [
+    {
+      "uuid": "92220332-aa38-4a3a-bd0f-7d163f607248",
+      "type": "http",
+      "documentation": "Returns a single randomized financial transaction. Called by Source 2 FastAPI producer every 2 seconds.",
+      "method": "get",
+      "endpoint": "transaction",
+      "responses": [
+        {
+          "uuid": "d0e9f54a-8214-48a3-b1ce-0f535343e83a",
+          "body": "{\n  \"transaction_id\": \"{{faker 'string.uuid'}}\",\n  \"timestamp\": \"{{now 'YYYY-MM-DD[T]HH:mm:ss'}}Z\",\n  \"amount\": {{faker 'finance.amount' min=1 max=2000 dec=2}},\n  \"currency\": \"{{oneOf (array 'USD' 'EUR' 'GBP' 'CAD' 'JPY')}}\",\n  \"merchant\": \"{{faker 'company.name'}}\",\n  \"category\": \"{{oneOf (array 'e-commerce' 'streaming' 'transport' 'food' 'tech' 'retail' 'health' 'travel')}}\",\n  \"status\": \"{{oneOf (array 'success' 'success' 'success' 'success' 'pending' 'pending' 'failed')}}\",\n  \"user_id\": \"{{faker 'string.uuid'}}\",\n  \"user_name\": \"{{faker 'person.fullName'}}\",\n  \"user_email\": \"{{faker 'internet.email'}}\",\n  \"user_country\": \"{{faker 'location.countryCode'}}\",\n  \"card_last4\": \"{{faker 'finance.creditCardNumber' issuer='visa'}}\",\n  \"card_type\": \"{{oneOf (array 'visa' 'mastercard' 'amex')}}\",\n  \"ip_address\": \"{{faker 'internet.ipv4'}}\",\n  \"device\": \"{{oneOf (array 'mobile' 'desktop' 'tablet')}}\"\n}",
+          "latency": 0,
+          "statusCode": 200,
+          "label": "Single transaction",
+          "headers": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "bodyType": "INLINE",
+          "filePath": "",
+          "databucketID": "",
+          "sendFileAsBody": false,
+          "rules": [],
+          "rulesOperator": "OR",
+          "disableTemplating": false,
+          "fallbackTo404": false,
+          "default": true,
+          "crudKey": "id",
+          "callbacks": []
+        }
+      ],
+      "responseMode": null,
+      "streamingMode": null,
+      "streamingInterval": 0
+    },
+    {
+      "uuid": "18cc25df-c83f-4f52-bfa4-bbddf0f59a26",
+      "type": "http",
+      "documentation": "Returns a batch of N transactions. Use ?count=10 to control batch size.",
+      "method": "get",
+      "endpoint": "transactions/batch",
+      "responses": [
+        {
+          "uuid": "95637c4a-0140-4140-9d7a-7faa1dbeced5",
+          "body": "[\n  {{#repeat (queryParam 'count' '5')}}\n  {\n    \"transaction_id\": \"{{faker 'string.uuid'}}\",\n    \"timestamp\": \"{{now 'YYYY-MM-DD[T]HH:mm:ss'}}Z\",\n    \"amount\": {{faker 'finance.amount' min=1 max=2000 dec=2}},\n    \"currency\": \"{{oneOf (array 'USD' 'EUR' 'GBP' 'CAD')}}\",\n    \"merchant\": \"{{faker 'company.name'}}\",\n    \"category\": \"{{oneOf (array 'e-commerce' 'streaming' 'transport' 'food' 'tech' 'retail')}}\",\n    \"status\": \"{{oneOf (array 'success' 'success' 'success' 'pending' 'failed')}}\",\n    \"user_id\": \"{{faker 'string.uuid'}}\",\n    \"user_name\": \"{{faker 'person.fullName'}}\",\n    \"user_email\": \"{{faker 'internet.email'}}\",\n    \"user_country\": \"{{faker 'location.countryCode'}}\",\n    \"card_last4\": \"{{faker 'finance.creditCardNumber' issuer='visa'}}\",\n    \"card_type\": \"{{oneOf (array 'visa' 'mastercard' 'amex')}}\",\n    \"ip_address\": \"{{faker 'internet.ipv4'}}\",\n    \"device\": \"{{oneOf (array 'mobile' 'desktop' 'tablet')}}\"\n  }{{#unless @last}},{{/unless}}\n  {{/repeat}}\n]",
+          "latency": 0,
+          "statusCode": 200,
+          "label": "Batch of transactions",
+          "headers": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "bodyType": "INLINE",
+          "filePath": "",
+          "databucketID": "",
+          "sendFileAsBody": false,
+          "rules": [],
+          "rulesOperator": "OR",
+          "disableTemplating": false,
+          "fallbackTo404": false,
+          "default": true,
+          "crudKey": "id",
+          "callbacks": []
+        }
+      ],
+      "responseMode": null,
+      "streamingMode": null,
+      "streamingInterval": 0
+    },
+    {
+      "uuid": "734bbe4a-0610-4a55-a82b-adfcf2d6708f",
+      "type": "http",
+      "documentation": "Health check endpoint — useful for Docker health probes.",
+      "method": "get",
+      "endpoint": "health",
+      "responses": [
+        {
+          "uuid": "23f047a8-4bf1-47d1-974a-3a65b7d9d8a9",
+          "body": "{\n  \"status\": \"ok\",\n  \"service\": \"mockoon-transaction-api\",\n  \"timestamp\": \"{{now 'YYYY-MM-DD[T]HH:mm:ss'}}Z\"\n}",
+          "latency": 0,
+          "statusCode": 200,
+          "label": "Healthy",
+          "headers": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "bodyType": "INLINE",
+          "filePath": "",
+          "databucketID": "",
+          "sendFileAsBody": false,
+          "rules": [],
+          "rulesOperator": "OR",
+          "disableTemplating": false,
+          "fallbackTo404": false,
+          "default": true,
+          "crudKey": "id",
+          "callbacks": []
+        }
+      ],
+      "responseMode": null,
+      "streamingMode": null,
+      "streamingInterval": 0
+    },
+    {
+      "uuid": "9624fc52-34df-4608-963b-6685f884ac79",
+      "type": "http",
+      "documentation": "Simulates a failed transaction response — useful for testing error handling in the consumer.",
+      "method": "get",
+      "endpoint": "transaction/error",
+      "responses": [
+        {
+          "uuid": "ef9a0b2f-a184-4f3f-9fc2-9fa6d51b5769",
+          "body": "{\n  \"transaction_id\": \"{{faker 'string.uuid'}}\",\n  \"timestamp\": \"{{now 'YYYY-MM-DD[T]HH:mm:ss'}}Z\",\n  \"amount\": {{faker 'finance.amount' min=1 max=500 dec=2}},\n  \"currency\": \"{{oneOf (array 'USD' 'EUR')}}\",\n  \"merchant\": \"{{faker 'company.name'}}\",\n  \"category\": \"{{oneOf (array 'e-commerce' 'retail')}}\",\n  \"status\": \"failed\",\n  \"error_code\": \"{{oneOf (array 'INSUFFICIENT_FUNDS' 'CARD_DECLINED' 'EXPIRED_CARD' 'FRAUD_DETECTED')}}\",\n  \"user_id\": \"{{faker 'string.uuid'}}\",\n  \"card_last4\": \"{{faker 'finance.creditCardNumber' issuer='visa'}}\"\n}",
+          "latency": 0,
+          "statusCode": 200,
+          "label": "Failed transaction",
+          "headers": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "bodyType": "INLINE",
+          "filePath": "",
+          "databucketID": "",
+          "sendFileAsBody": false,
+          "rules": [],
+          "rulesOperator": "OR",
+          "disableTemplating": false,
+          "fallbackTo404": false,
+          "default": true,
+          "crudKey": "id",
+          "callbacks": []
+        }
+      ],
+      "responseMode": null,
+      "streamingMode": null,
+      "streamingInterval": 0
+    }
+  ],
+  "rootChildren": [
+    {
+      "type": "route",
+      "uuid": "92220332-aa38-4a3a-bd0f-7d163f607248"
+    },
+    {
+      "type": "route",
+      "uuid": "18cc25df-c83f-4f52-bfa4-bbddf0f59a26"
+    },
+    {
+      "type": "route",
+      "uuid": "734bbe4a-0610-4a55-a82b-adfcf2d6708f"
+    },
+    {
+      "type": "route",
+      "uuid": "9624fc52-34df-4608-963b-6685f884ac79"
+    }
+  ],
+  "proxyMode": false,
+  "proxyHost": "",
+  "proxyRemovePrefix": false,
+  "tlsOptions": {
+    "enabled": false,
+    "type": "CERT",
+    "pfxPath": "",
+    "certPath": "",
+    "keyPath": "",
+    "caPath": "",
+    "passphrase": ""
+  },
+  "cors": true,
+  "headers": [
+    {
+      "key": "Content-Type",
+      "value": "application/json"
+    },
+    {
+      "key": "Access-Control-Allow-Origin",
+      "value": "*"
+    }
+  ],
+  "proxyReqHeaders": [],
+  "proxyResHeaders": [],
+  "data": [],
+  "callbacks": []
+}

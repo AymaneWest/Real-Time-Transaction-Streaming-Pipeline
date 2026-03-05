@@ -1,35 +1,39 @@
 """
-Source 2 — Mockoon-style Mock API + FastAPI Kafka Producer
-----------------------------------------------------------
-Simulates the Mockoon API block from the diagram.
-A built-in mock endpoint generates realistic bank-like transaction
-JSON, and a background loop continuously POSTs to the FastAPI
-endpoint which then publishes the event to Kafka.
+Source 2 — Mockoon Fetcher + FastAPI Kafka Producer
+----------------------------------------------------
+Fetches real transaction data from your running Mockoon instance
+(http://host.docker.internal:3000/api/transaction) using the
+requests library, then publishes each response to Kafka.
+
+Mockoon must be running on your host machine on port 3000 before
+starting this container. The endpoint /api/transaction should
+return a single transaction JSON object per call.
 """
 
 import asyncio
 import json
 import os
-import random
-import uuid
-from datetime import datetime, timezone
+import time
 
+import requests
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from kafka import KafkaProducer
 from kafka.errors import NoBrokersAvailable
 
 # ── Config ────────────────────────────────────────────────────────────────────
-KAFKA_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-KAFKA_TOPIC   = os.getenv("KAFKA_TOPIC", "transactions")
-SOURCE_NAME   = os.getenv("SOURCE_NAME", "source2")
-INTERVAL      = float(os.getenv("PRODUCE_INTERVAL_SEC", "2"))
+KAFKA_SERVERS  = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+KAFKA_TOPIC    = os.getenv("KAFKA_TOPIC", "transactions")
+SOURCE_NAME    = os.getenv("SOURCE_NAME", "source2")
+INTERVAL       = float(os.getenv("PRODUCE_INTERVAL_SEC", "2"))
 
-MERCHANTS  = ["Amazon", "Netflix", "Uber", "Starbucks", "Apple", "Walmart"]
-CATEGORIES = ["e-commerce", "streaming", "transport", "food", "tech", "retail"]
-CURRENCIES = ["USD", "EUR", "GBP", "CAD"]
+# host.docker.internal resolves to the host machine from inside Docker.
+# Override via env var if needed (e.g. for Linux: set to your host LAN IP).
+MOCKOON_BASE   = os.getenv("MOCKOON_BASE_URL", "http://host.docker.internal:3000")
+MOCKOON_PATH   = os.getenv("MOCKOON_ENDPOINT", "/api/transaction")
+MOCKOON_URL    = f"{MOCKOON_BASE}{MOCKOON_PATH}"
 
-app = FastAPI(title="Source 2 – Mock API Producer")
+app = FastAPI(title="Source 2 – Mockoon Fetcher + Kafka Producer")
 
 # ── Kafka producer (with retry) ───────────────────────────────────────────────
 def create_producer() -> KafkaProducer:
@@ -43,59 +47,82 @@ def create_producer() -> KafkaProducer:
             return producer
         except NoBrokersAvailable:
             print(f"[source2] Waiting for Kafka... attempt {attempt}")
-            import time; time.sleep(5)
+            time.sleep(5)
     raise RuntimeError("Could not connect to Kafka after retries")
 
 producer: KafkaProducer | None = None
 
-# ── Mock data generator (mimics Mockoon response) ────────────────────────────
-def generate_mock_transaction() -> dict:
-    merchant = random.choice(MERCHANTS)
-    return {
-        "transaction_id": str(uuid.uuid4()),
-        "source":         SOURCE_NAME,
-        "timestamp":      datetime.now(timezone.utc).isoformat(),
-        "amount":         round(random.uniform(1.0, 500.0), 2),
-        "currency":       random.choice(CURRENCIES),
-        "merchant":       merchant,
-        "category":       CATEGORIES[MERCHANTS.index(merchant)],
-        "status":         random.choices(["success", "pending", "failed"], weights=[80, 15, 5])[0],
-        "user_id":        f"user_{random.randint(1000, 9999)}",
-        "card_last4":     str(random.randint(1000, 9999)),
-    }
+# ── Fetch one transaction from Mockoon ───────────────────────────────────────
+def fetch_from_mockoon() -> dict:
+    """
+    GETs a transaction from Mockoon and injects source metadata.
+    Raises requests.RequestException if Mockoon is unreachable.
+    """
+    response = requests.get(MOCKOON_URL, timeout=5)
+    response.raise_for_status()
+    tx = response.json()
+
+    # Stamp the source so the consumer/dashboard can distinguish it
+    tx["source"] = SOURCE_NAME
+    return tx
 
 # ── FastAPI endpoints ─────────────────────────────────────────────────────────
-@app.get("/mock-api")
-def mock_api():
-    """Mimics the Mockoon API — returns a fresh transaction JSON."""
-    return generate_mock_transaction()
+@app.get("/fetch")
+def fetch():
+    """Manually fetch one transaction from Mockoon (without publishing)."""
+    try:
+        return fetch_from_mockoon()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Mockoon unreachable: {e}")
 
 @app.post("/produce")
 def produce():
-    """FastAPI endpoint that publishes one transaction to Kafka."""
-    tx = generate_mock_transaction()
+    """Fetch from Mockoon and publish one transaction to Kafka."""
+    try:
+        tx = fetch_from_mockoon()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Mockoon unreachable: {e}")
+
     producer.send(KAFKA_TOPIC, value=tx)
     producer.flush()
-    print(f"[source2] → Kafka | {tx['transaction_id']} | {tx['merchant']} | {tx['amount']} {tx['currency']}")
-    return {"status": "sent", "transaction_id": tx["transaction_id"]}
+    print(f"[source2] → Kafka | {tx.get('transaction_id','?')} | "
+          f"{tx.get('merchant','?')} | {tx.get('amount','?')} {tx.get('currency','?')}")
+    return {"status": "sent", "transaction_id": tx.get("transaction_id")}
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "source": SOURCE_NAME}
+    mockoon_ok = True
+    try:
+        requests.get(MOCKOON_URL, timeout=2).raise_for_status()
+    except Exception:
+        mockoon_ok = False
+    return {
+        "status": "ok",
+        "source": SOURCE_NAME,
+        "mockoon_reachable": mockoon_ok,
+        "mockoon_url": MOCKOON_URL,
+    }
 
 # ── Background producer loop ──────────────────────────────────────────────────
 async def auto_produce():
     global producer
-    await asyncio.sleep(5)           # let Kafka settle
+    await asyncio.sleep(5)          # let Kafka settle first
     producer = create_producer()
+
+    print(f"[source2] Starting auto-fetch loop from {MOCKOON_URL} every {INTERVAL}s")
+
     while True:
         try:
-            tx = generate_mock_transaction()
+            tx = fetch_from_mockoon()
             producer.send(KAFKA_TOPIC, value=tx)
             producer.flush()
-            print(f"[source2] → Kafka | {tx['transaction_id']} | {tx['merchant']} | {tx['amount']}")
+            print(f"[source2] → Kafka | {tx.get('transaction_id','?')} | "
+                  f"{tx.get('merchant','?')} | {tx.get('amount','?')}")
+        except requests.RequestException as e:
+            print(f"[source2] Mockoon fetch failed (is it running on port 3000?): {e}")
         except Exception as e:
             print(f"[source2] Produce error: {e}")
+
         await asyncio.sleep(INTERVAL)
 
 @app.on_event("startup")

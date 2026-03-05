@@ -93,24 +93,38 @@ def recent(limit: int = 20):
     """Most recent transactions."""
     docs = list(
         collection.find({}, {"_id": 0})
-                  .sort("timestamp", -1)
+                  .sort("_id", -1)
                   .limit(limit)
     )
     return docs
 
 @app.get("/api/timeseries")
 def timeseries():
-    """Transactions bucketed by minute for the last 30 minutes."""
-    pipeline = [
-        {"$project": {
-            "minute": {"$dateToString": {"format": "%H:%M", "date": {"$toDate": "$timestamp"}}},
-            "amount": 1,
-        }},
-        {"$group": {"_id": "$minute", "count": {"$sum": 1}, "total": {"$sum": "$amount"}}},
-        {"$sort": {"_id": 1}},
-        {"$limit": 30},
+    """Transactions bucketed by minute — done in Python to avoid MongoDB date parsing errors."""
+    from collections import defaultdict
+    from datetime import datetime
+
+    docs = list(collection.find({}, {"_id": 0, "timestamp": 1, "amount": 1}))
+
+    buckets: dict = defaultdict(lambda: {"count": 0, "total": 0.0})
+
+    for doc in docs:
+        ts_raw = doc.get("timestamp", "")
+        try:
+            # Handle both "2026-03-05T14:32:10Z" and "2026-03-05T14:32:10.123Z"
+            ts_clean = ts_raw.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(ts_clean)
+            minute = dt.strftime("%H:%M")
+            buckets[minute]["count"] += 1
+            buckets[minute]["total"] += float(doc.get("amount", 0))
+        except Exception:
+            continue  # silently skip malformed timestamps
+
+    result = [
+        {"_id": minute, "count": v["count"], "total": round(v["total"], 2)}
+        for minute, v in sorted(buckets.items())
     ]
-    return list(collection.aggregate(pipeline))
+    return result[-30:]  # last 30 minutes
 
 # ── Chart.js Dashboard HTML ───────────────────────────────────────────────────
 @app.get("/", response_class=HTMLResponse)
@@ -283,58 +297,72 @@ def dashboard():
       data: [], backgroundColor: ['#48bb78','#ecc94b','#fc8181'],
     }]});
 
-    async function refresh() {
+    async function safeFetch(url) {
       try {
-        const [stats, ts, cat, status, recent] = await Promise.all([
-          fetch('/api/stats').then(r=>r.json()),
-          fetch('/api/timeseries').then(r=>r.json()),
-          fetch('/api/by-category').then(r=>r.json()),
-          fetch('/api/by-status').then(r=>r.json()),
-          fetch('/api/recent?limit=15').then(r=>r.json()),
-        ]);
+        const r = await fetch(url);
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return await r.json();
+      } catch(e) {
+        console.warn('[safeFetch] ' + url + ' failed:', e.message);
+        return null;
+      }
+    }
 
-        // KPIs
+    async function refresh() {
+      // Each fetch is independent — one failure never blocks the others
+      const [stats, ts, cat, status, recent] = await Promise.all([
+        safeFetch('/api/stats'),
+        safeFetch('/api/timeseries'),
+        safeFetch('/api/by-category'),
+        safeFetch('/api/by-status'),
+        safeFetch('/api/recent?limit=15'),
+      ]);
+
+      if (stats) {
         document.getElementById('kTotal').textContent   = stats.total.toLocaleString();
         document.getElementById('kSuccess').textContent = stats.success.toLocaleString();
         document.getElementById('kPending').textContent = stats.pending.toLocaleString();
         document.getElementById('kFailed').textContent  = stats.failed.toLocaleString();
         document.getElementById('kAmount').textContent  = '$' + stats.total_amount.toLocaleString();
         document.getElementById('kSrc').textContent     = stats.source1_count + ' / ' + stats.source2_count;
+      }
 
-        // Time series
+      if (ts && Array.isArray(ts)) {
         tsChart.data.labels = ts.map(d => d._id);
         tsChart.data.datasets[0].data = ts.map(d => d.count);
         tsChart.update();
+      }
 
-        // Category
+      if (cat && Array.isArray(cat)) {
         catChart.data.labels = cat.map(d => d._id || 'unknown');
         catChart.data.datasets[0].data = cat.map(d => d.count);
         catChart.update();
+      }
 
-        // Status
+      if (status && Array.isArray(status)) {
         statusChart.data.labels = status.map(d => d._id);
         statusChart.data.datasets[0].data = status.map(d => d.count);
         statusChart.update();
+      }
 
-        // Table
+      if (recent && Array.isArray(recent)) {
         const tbody = document.getElementById('txTable');
-        tbody.innerHTML = recent.map(tx => `
-          <tr>
-            <td style="font-family:monospace;color:#718096">${tx.transaction_id?.slice(0,8)}…</td>
-            <td><span class="badge ${tx.source}">${tx.source}</span></td>
-            <td>${tx.merchant || '—'}</td>
-            <td>${tx.category || '—'}</td>
-            <td style="color:#b794f4">$${(tx.amount||0).toFixed(2)} ${tx.currency||''}</td>
-            <td><span class="badge ${tx.status}">${tx.status}</span></td>
-            <td style="color:#718096">${tx.timestamp ? new Date(tx.timestamp).toLocaleTimeString() : '—'}</td>
-          </tr>
-        `).join('');
-
-      } catch(e) {
-        console.warn('Refresh error:', e);
+        tbody.innerHTML = recent.map(tx => {
+          const amt  = parseFloat(tx.amount);
+          const amtStr = isNaN(amt) ? '—' : '$' + amt.toFixed(2) + ' ' + (tx.currency || '');
+          const time = tx.timestamp ? new Date(tx.timestamp).toLocaleTimeString() : '—';
+          return '<tr>'
+            + '<td style="font-family:monospace;color:#718096">' + (tx.transaction_id||'?').slice(0,8) + '…</td>'
+            + '<td><span class="badge ' + (tx.source||'') + '">' + (tx.source||'—') + '</span></td>'
+            + '<td>' + (tx.merchant||'—') + '</td>'
+            + '<td>' + (tx.category||'—') + '</td>'
+            + '<td style="color:#b794f4">' + amtStr + '</td>'
+            + '<td><span class="badge ' + (tx.status||'') + '">' + (tx.status||'—') + '</span></td>'
+            + '<td style="color:#718096">' + time + '</td>'
+            + '</tr>';
+        }).join('');
       }
     }
-
     refresh();
     setInterval(refresh, 5000);
   </script>

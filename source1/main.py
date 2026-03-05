@@ -50,7 +50,7 @@ def generate_faker_transaction() -> dict:
     return {
         "transaction_id": str(uuid.uuid4()),
         "source":         SOURCE_NAME,
-        "timestamp":      datetime.now(timezone.utc).isoformat(),
+        "timestamp":      datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S") + "Z",
         "amount":         round(random.uniform(5.0, 2000.0), 2),
         "currency":       random.choice(["USD", "EUR", "GBP", "JPY", "AUD"]),
         "merchant":       fake.company(),
