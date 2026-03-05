@@ -93,7 +93,7 @@ Give it ~30 seconds for Kafka to become healthy before producers connect.
 | `/produce`  | POST   | Manually trigger a Kafka publish     |
 | `/health`   | GET    | Health check                         |
 
-### Dashboard (http://localhost:3000)
+### Dashboard (http://localhost:3030)
 | Endpoint           | Method | Description                        |
 |--------------------|--------|------------------------------------|
 | `/`                | GET    | Chart.js dashboard UI              |
